@@ -61,8 +61,10 @@ unsigned int x_0 = 52;
 unsigned int y_0 = 44;
 unsigned int radius = 30;
 unsigned int automove = 1;
+   double redfactor;
 
 Viewer *view = NULL;
+Viewer *view2 = NULL;
 Camera *cam  = NULL;
 double meter_start_value = 0.0;
 bool force_print = false;
@@ -87,10 +89,34 @@ void onexit(int e) {
   exit (e);
 }
 
+char pollkbd() {
+    int c=0;;
+    if (keyPressed(&c)) {
+      printf("> %c ",c);
+      switch (c) 
+      {
+       case 'e': if (y_0-radius<=0)    	break;y_0--;break; // Up
+        case 'x': if (y_0+radius>=IMAGE_HEIGHT)	break;y_0++;break; // Down
+        case 's': if (x_0-radius<=0)     	break;x_0--;break; // Rignt
+        case 'd': if (x_0+radius>=IMAGE_WIDTH) 	break;x_0++;break; // Left
+        
+        case 'a': if (radius<20)		break;radius--;break; //Smaller radius
+        case 'f': if (x_0-radius<=0 || y_0-radius<=0 || x_0+radius>=IMAGE_WIDTH || y_0+radius>=IMAGE_HEIGHT) break; 
+                                                radius++; break; //Larger radius
+        
+        case 'm': automove=automove==0?1:0; break;
+        case 'p':
+        case 'q': break;
+        default: c=0;
+      }
+      printf("%d %d %d\n", x_0, y_0, radius);
+    }
+    return c;
+}
+
 
 
 static void setregions() {
-   unsigned int radius=35;
    unsigned int sqr2=radius*0.7;
    
    region[0].x=x_0;		region[0].y=y_0-radius;
@@ -112,7 +138,7 @@ static int regionHit(Image *img) {
    unsigned char green;
    unsigned char blue;
    unsigned char *pixel;
-
+   double f;
    for (i = 0; i < NUM_REGIONS; i++) {
       count_dark = 0;
       rx = region[i].x;
@@ -133,12 +159,30 @@ static int regionHit(Image *img) {
 
             // check if pixel is dark
 //            if (red < 128 || green < 128 || blue < 128){
-            if (red > (green + blue )*0.6 ) {
+            f=red/((green+blue)/redfactor);
+            /*
+            if (red > (green + blue )*redfactor ) {
                count_dark++;
                imgSetPixel(img, x, y, 0, 0, 255);
             } else
                imgSetPixel(img, x, y, 0, 255,0);
-         }
+            */
+            if (f>1.1) {
+               count_dark++;
+               imgSetPixel(img, x, y, 0, 0, 255);
+              
+            } else if (f>0.9) {
+               imgSetPixel(img, x, y, 255,0,0 );
+            } else if (f>0.7) {
+               imgSetPixel(img, x, y, 0, 255,255 );
+            } else if (f>0.5) {
+               imgSetPixel(img, x, y, 60,60,60 );
+             } else if (f>0.3) {
+               imgSetPixel(img, x, y, 30,30,30 );
+            } else {
+               imgSetPixel(img, x, y, 0, 0,0 );
+            }
+        }
       }
 
       // We have a hit if more than 80% of the pixels is dark 
@@ -150,6 +194,57 @@ static int regionHit(Image *img) {
    return -1;
 }
 
+static int AverageRegions(Image *img, int dispcount) {
+
+   unsigned int i;
+   unsigned int x, y;
+   unsigned int rx, ry, rw, rh;
+   unsigned char *pixel;
+   double totred = 0;
+   double totblue = 0;
+   double totgreen = 0;
+   double red = 0;
+   double blue = 0;
+   double green = 0;
+   
+
+   for (i = 0; i < NUM_REGIONS; i++) {
+      rx = region[i].x;
+      ry = region[i].y;
+      rw = region[i].w;
+      rh = region[i].h;
+      red = 0;
+      blue = 0;
+      green = 0;
+
+      // Count number of dark pixels in given region
+      for (x = rx; x < rx + rw; x++) {
+         for (y = ry; y < ry + rh; y++) {
+            // Get a pointer to the current pixel
+            pixel = (unsigned char *)imgGetPixel(img, x, y);
+
+            // index 0 is blue, 1 is green and 2 is red
+            red += pixel[2];
+            green += pixel[1];
+            blue += pixel[0];
+
+         }
+      }
+      if (dispcount==1) {
+        // printf("R%5.0fG%5.0fB%5.0f ",red,green,blue,(green+blue)/red);
+        printf("%d %f \n",i,((green+blue)/red)/redfactor);
+      };
+      totred += red;
+      totgreen += green;
+      totblue += blue;
+   
+   }
+   redfactor = (totgreen+totblue)/totred;
+   if (dispcount==1) {
+     printf("Tot:%f\n",redfactor);
+   };
+   return -1;
+}
 static void drawRegion(Image *img, REGION region, unsigned char red, unsigned char green, unsigned char blue) {
 
    unsigned int x, y;
@@ -181,7 +276,7 @@ void publishValues(time_t time, double last_minute, double last_10minute, double
 
 void updateValues(int new_region_number) {
 
-   static time_t last_update_time = 0;
+   static time_t last_update_minute = 0;
    static time_t last_update_10time = 0;
    static int last_region_number = -1;
 
@@ -198,7 +293,7 @@ void updateValues(int new_region_number) {
    char time_str[20];
    strftime(time_str, sizeof(time_str), "%H:%M:%S", tmptr);
 
-   if (last_update_time == 0) last_update_time = new_time;
+   if (last_update_minute == 0) last_update_minute = new_time/60;
    if (last_update_10time == 0) last_update_10time = new_time;
 
    if (new_region_number != -1 && last_region_number != -1 &&
@@ -219,7 +314,7 @@ void updateValues(int new_region_number) {
       last_drain    += (elapsed_regions * 1.0 / NUM_REGIONS);
       }
    }
-   if (new_time >= last_update_time + 60) {
+   if (new_time/60 > last_update_minute) {
       
       publishValues(new_time, last_minute, last_10minute, last_drain, total);
 
@@ -229,7 +324,7 @@ void updateValues(int new_region_number) {
    
       if (last_minute == 0.0) last_drain = 0.0;
       last_minute = 0.0;
-      last_update_time = new_time;
+      last_update_minute = new_time/60;
       frame_rate = 0;
 
       // add total value to rrd database by running shell command rrdtool update:
@@ -252,7 +347,8 @@ void updateValues(int new_region_number) {
    frame_rate++;
 }
 
-static void cleanup(int sig, siginfo_t *siginfo, void *context) {
+//static void cleanup(int sig, siginfo_t *siginfo, void *context) {
+void cleanup(int sig, siginfo_t *siginfo, void *context) {
 
    if (view) viewClose(view);
    if (cam) camClose(cam);
@@ -272,13 +368,12 @@ static void sig_handler(int signo) {
    unsigned int startpx[IMAGE_WIDTH];
    unsigned int len[IMAGE_WIDTH];
 
-static void calibrate(Image *img) 
+static void calibrate(Image *img, int dispcount) 
 {
    unsigned int x, y, p;
    double totred = 0;
    double totblue = 0;
    double totgreen = 0;
-   double redfactor;
    unsigned char red,green,blue;
    unsigned char *pixel;
    unsigned int b,e,m;
@@ -294,6 +389,7 @@ static void calibrate(Image *img)
       exit(1);
    }
 */
+   if (true) {AverageRegions(img,dispcount);} else {
    // Find average ratio of red to (green+blue)
    for (x = 0; x < IMAGE_WIDTH; x++)  {
      for (y = 0; y < IMAGE_HEIGHT; y++) {
@@ -311,7 +407,8 @@ static void calibrate(Image *img)
    //printf("Red: %f Blue: %f Greem; %f \n",totred,totgreen,totblue);
    redfactor = (totgreen+totblue)/totred;
    //printf("Redfactor = %f\n",redfactor);
-
+   };
+   if (!automove) return;
 
    // Mark start and end of red each vertocal line of red pixels
    // At least 16 pixels in row,
@@ -458,7 +555,7 @@ int main(int argc, char * argv[])
    int    i;
    int    new_region_number;
    bool   display_image = false;
-
+ 
 //   struct sigaction sa;
 
 //   memset(&sa, '\0', sizeof(sa));
@@ -492,7 +589,7 @@ int main(int argc, char * argv[])
          fclose(fp);
       }
    }
-
+   readini();
    setregions();
    
    // initialise the image library
@@ -514,10 +611,17 @@ int main(int argc, char * argv[])
          fflush(stderr);
          onexit(1);
       }
+      view2 = viewOpen(IMAGE_WIDTH, IMAGE_HEIGHT, "WATER-METER");
+      if (!view2) {
+         fprintf(stderr, "Unable to open view\n");
+         fflush(stderr);
+         onexit(1);
+      }
    }
    // capture images from the webcam	
    int c=0;
-   while(1){
+   char k;
+   while((k=pollkbd())!='q'){
 
 
       Image *img = camGrabImage(cam);
@@ -526,8 +630,9 @@ int main(int argc, char * argv[])
          fflush(stderr);
          onexit(1);
       }
-      sleep(0.25);
-      if (!c--) {calibrate(img); c=50;}
+      usleep(100000); //0.1 sec
+      if (k!=0) {printf("%d\n",k);c=0;setregions();calibrate(img,1);} 
+      else if (!c--) {calibrate(img,0); c=50;}
 
       // check if any region has a hit
       new_region_number = regionHit(img);
@@ -550,11 +655,13 @@ int main(int argc, char * argv[])
             drawRegion(img, region[i], red, green, blue);
          }
          for (int x = 0; x < IMAGE_WIDTH; x++)  {
+           if (automove) {
                if (startpx[x]<9999) {
                  for (int p = startpx[x];p<startpx[x]+len[x];p++) {
                    imgSetPixel(img, x, p, 0,255,255);
                  };
                };
+            };
 //     
 
             imgSetPixel(img, x, y_0+5, 255,0,0);
@@ -568,6 +675,7 @@ int main(int argc, char * argv[])
 
       // destroy image
       imgDestroy(img);
+      writeini();
    }
 
    // cleanup and exit

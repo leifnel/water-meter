@@ -33,7 +33,7 @@ void readini() {
   ini_putl("camerapos", "automove", automove, inifile);
   }
 
-bool pollkbd() {
+char pollkbd() {
     if (keyPressed(&c)) {
       printf("> %c ",c);
       switch (c) 
@@ -51,9 +51,9 @@ bool pollkbd() {
         case 'q': looper = false;
       }
       printf("%d %d %d\n", x_0, y_0, radius);
-      return true;
+      return c;
     }
-    return false;
+    return \0;
 }
 
 int main(int argc, char * argv[])

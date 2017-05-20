@@ -219,7 +219,7 @@ Image * camGrabImage(Camera * cam)
 		int r;
 		int g;
 		int b;
-
+if (1) {
 		// first RGB
 		r = y0 + ((357 * cr) >> 8) - 179;
 
@@ -237,6 +237,17 @@ Image * camGrabImage(Camera * cam)
 		img_pos[5] = r > 254 ? 255 : (r < 0 ? 0 : r);
 		img_pos[4] = g > 254 ? 255 : (g < 0 ? 0 : g);
 		img_pos[3] = b > 254 ? 255 : (b < 0 ? 0 : b);
+} else if(0) {
+                img_pos[0]=img_pos[1]=img_pos[2]=y0;
+                img_pos[3]=img_pos[4]=img_pos[5]=y1;
+} else if(0) {
+                img_pos[0]=img_pos[1]=img_pos[2]=cb;
+                img_pos[3]=img_pos[4]=img_pos[5]=cb;
+} else if(1) {
+                img_pos[0]=img_pos[1]=img_pos[2]=cr;
+                img_pos[3]=img_pos[4]=img_pos[5]=cr;
+}		
+		
 	}
 
 
