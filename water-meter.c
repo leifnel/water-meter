@@ -6,6 +6,8 @@
 #include <unistd.h>
 
 #include <imgproc.h>
+#include <mosquitto.h>
+
 #include <stdbool.h>
 #include <key.h>
 #include <minIni.h>
@@ -33,8 +35,8 @@ Usage:
 #define NUM_REGIONS      8
 #define IMAGE_WIDTH    176
 #define IMAGE_HEIGHT   144 
-#define WATER_METER_TOTAL_FILE   "/home/pi/water/water-meter-total.log"
-#define RRDTOOL_PATH             "/usr/local/bin/rrdtool"
+#define WATER_METER_TOTAL_FILE   "/home/pi/water-meter/water-meter-total.log"
+#define RRDTOOL_PATH             "/usr/bin/rrdtool"
 #define WATER_LOG_RRD_FILE       "/home/pi/water-meter/water.rrd"
 
 const char inifile[] = "water.ini";
@@ -64,8 +66,8 @@ unsigned int automove = 1;
    double redfactor;
 
 Viewer *view = NULL;
-Viewer *view2 = NULL;
 Camera *cam  = NULL;
+struct mosquitto *mosq = NULL;
 double meter_start_value = 0.0;
 bool force_print = false;
 
@@ -264,15 +266,91 @@ static void drawRegion(Image *img, REGION region, unsigned char red, unsigned ch
    x = rx + rw;
    for (y = ry; y < ry + rh; y++) imgSetPixel(img, x, y, blue, green, red);
 }
+void doPublish(char *topic, char *payload) {
+
+   int i;
+   int  rc;
+
+   for (i = 0; i < 10; i++) {
+      rc = mosquitto_publish(mosq, NULL, topic, strlen(payload), payload, 0, true);
+      if (rc != MOSQ_ERR_SUCCESS) {
+         fprintf(stderr, "Error: mosquitto_publish %d. Try to reconnect.\n", rc);
+         fflush(stderr);
+         rc = mosquitto_reconnect(mosq);
+         if (rc != MOSQ_ERR_SUCCESS) {
+            fprintf(stderr, "Error: mosquitto_reconnect %d. Failed to reconnect.\n", rc);
+            fflush(stderr);
+         }
+      }
+      else {
+         mosquitto_loop(mosq, 0, 1);
+         return;
+      }
+   }
+}
 
 void publishValues(time_t time, double last_minute, double last_10minute, double last_drain,
                    double total) {
-   FILE *fp = fopen(WATER_METER_TOTAL_FILE, "w+");
-   if (fp) {
-      fprintf(fp, "%8.2f", total + meter_start_value);
-      fclose(fp);
+   char *last_minute_topic   = "/lusa/misc-1/WATER_METER_FLOW/status";
+   char *last_10minute_topic = "/lusa/misc-1/WATER_METER_10MIN/status";
+   char *last_drain_topic    = "/lusa/misc-1/WATER_METER_DRAIN/status";
+   char *total_topic         = "/lusa/misc-1/WATER_METER_TOTAL/status";
+   char *payload_format      = "{\"type\":\"METER_VALUE\",\"update_time\":%llu,\"value\":%.2f,\"unit\":\"%s\"}";
+   char payload[200];
+   static double published_last_minute   = -1.0;
+   static double published_last_10minute = -1.0;
+   static double published_last_drain    = -1.0;
+   static double published_total         = -1.0;
+
+   if (mosq) {
+      fprintf(stderr, "Publish [");
+      fflush(stderr);
+      if (1 || last_minute != published_last_minute) {
+         sprintf(payload, payload_format, (long long)time*1000, last_minute, "l/m");
+         doPublish(last_minute_topic, payload);
+         published_last_minute = last_minute;
+         fprintf(stderr, "1");
+         fflush(stderr);
+      }
+      if (last_10minute != published_last_10minute) {
+         sprintf(payload, payload_format, (long long)time*1000, last_10minute, "l/10m");
+         doPublish(last_10minute_topic, payload);
+         published_last_10minute = last_10minute;
+         fprintf(stderr, "T");
+         fflush(stderr);
+      }
+
+      if (last_drain != published_last_drain && last_drain > 0.0) {
+         sprintf(payload, payload_format, (long long)time*1000, last_drain, "l");
+         doPublish(last_drain_topic, payload);
+         published_last_drain = last_drain;
+         fprintf(stderr, "D");
+         fflush(stderr);
+      }
+
+      if (true || total != published_total) {
+         sprintf(payload, payload_format, (long long)time*1000, total + meter_start_value, "l");
+         doPublish(total_topic, payload);
+         published_total = total;
+
+         FILE *fp = fopen(WATER_METER_TOTAL_FILE, "w+");
+         if (fp) {
+            fprintf(fp, "%8.2f", total + meter_start_value);
+            fclose(fp);
+         }
+         fprintf(stderr, "P");
+         fflush(stderr);
+      }
+
+      mosquitto_loop(mosq, 0, 1);
+      fprintf(stderr, "]\n");
+      fflush(stderr);
    }
-} 
+   else {
+      fprintf(stderr, "Error: mosq\n");
+      fflush(stderr);
+   }
+}
 
 void updateValues(int new_region_number) {
 
@@ -355,6 +433,10 @@ void cleanup(int sig, siginfo_t *siginfo, void *context) {
 
    // unintialise the library
    quit_imgproc();
+
+   // cleanup mosquitto connection
+   if (mosq) mosquitto_destroy(mosq);
+   mosquitto_lib_cleanup();
 
    onexit(0);
 }
@@ -554,6 +636,10 @@ int main(int argc, char * argv[])
 {
    int    i;
    int    new_region_number;
+   char   *host = "192.168.1.254";
+   int    port = 1883;
+   int    keepalive = 120;
+   bool   clean_session = true;
    bool   display_image = false;
  
 //   struct sigaction sa;
@@ -591,6 +677,21 @@ int main(int argc, char * argv[])
    }
    readini();
    setregions();
+
+   // initialise mosquitto connection
+   mosquitto_lib_init();
+   mosq = mosquitto_new(NULL, clean_session, NULL);
+   if (!mosq) {
+      fprintf(stderr, "Error: Out of memory.\n");
+      fflush(stderr);
+      return 1;
+   }
+
+   if(mosquitto_connect(mosq, host, port, keepalive)){
+      fprintf(stderr, "Unable to connect.\n");
+      fflush(stderr);
+      return 1;
+   }
    
    // initialise the image library
    init_imgproc();
@@ -607,12 +708,6 @@ int main(int argc, char * argv[])
    if (display_image) {
       view = viewOpen(IMAGE_WIDTH, IMAGE_HEIGHT, "WATER-METER");
       if (!view) {
-         fprintf(stderr, "Unable to open view\n");
-         fflush(stderr);
-         onexit(1);
-      }
-      view2 = viewOpen(IMAGE_WIDTH, IMAGE_HEIGHT, "WATER-METER");
-      if (!view2) {
          fprintf(stderr, "Unable to open view\n");
          fflush(stderr);
          onexit(1);

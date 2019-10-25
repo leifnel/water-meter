@@ -1,6 +1,6 @@
 CC		= gcc
 CFLAGS		= -c -Wall -I . -std=gnu99 -g
-LDFLAGS		= -lSDLmain -lSDL
+LDFLAGS		= -lmosquitto -lSDLmain -lSDL
 SOURCES		= water-meter.c camera.c util.c viewer.c image.c key.c minIni.c
 OBJECTS		= $(SOURCES:.c=.o)
 EXECUTABLE1	= water-meter

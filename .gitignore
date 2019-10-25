@@ -1,0 +1,4 @@
+*.o
+*~
+water-meter
+usbreset
