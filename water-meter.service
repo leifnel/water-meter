@@ -1,0 +1,12 @@
+[Unit]
+Description=Vandmåler
+
+[Service]
+User=pi
+ExecStart="/home/pi/water-meter/water-meter.cmd.sh"
+Restart=always
+RestartSec=30
+StartLimitBurst=20
+
+[Install]
+WantedBy=multi-user.target
